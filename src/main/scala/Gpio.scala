@@ -1,9 +1,9 @@
 package io.github.samanos.tlog
-package gpio
 
 import java.io.InputStream
 import java.io.IOException
-import java.nio.file.{ Files, Paths }
+import java.nio.file._
+import java.nio.file.attribute.BasicFileAttributes
 
 import akka.util.ByteString
 
@@ -11,14 +11,76 @@ import scala.concurrent._
 import scala.sys.process._
 import scala.util.{ Failure, Success }
 
-object GpioControl {
+object Gpio {
 
-  def export(port: Int): Future[Unit] =
+  import scala.concurrent.ExecutionContext.Implicits.global
+
+  object Port extends Enumeration {
+    type Port = Value
+    val Gpio17 = Value("17")
+    val Gpio22 = Value("22")
+    val Gpio27 = Value("27")
+  }
+  import Port._
+
+  object Direction extends Enumeration {
+    type Direction = Value
+    val Out = Value("out")
+    val In = Value("in")
+  }
+  import Direction._
+
+  def export(port: Port): Future[Unit] =
     if (!Files.exists(Paths.get(s"/sys/class/gpio/gpio$port"))) {
       s"echo $port" #| "sudo cp /dev/stdin /sys/class/gpio/export" runNoOutput
     } else {
       Future.successful()
     }
+
+  def direction(port: Port, direction: Direction): Future[Unit] = {
+    if (slurp(s"/sys/class/gpio/gpio$port/direction") != direction) {
+      s"echo $direction"#| s"sudo cp /dev/stdin /sys/class/gpio/gpio$port/direction" runNoOutput
+    } else {
+      Future.successful()
+    }
+  }
+
+  def value(port: Port, value: String): Future[Unit] = {
+    if (slurp(s"/sys/class/gpio/gpio$port/value") != value) {
+      s"echo $value"#| s"sudo cp /dev/stdin /sys/class/gpio/gpio$port/value" runNoOutput
+    } else {
+      Future.successful()
+    }
+  }
+
+  def led(port: Port, on: Boolean) = for {
+    _ <- export(port).transform(identity, printingIdentity)
+    _ <- direction(port, Out).transform(identity, printingIdentity)
+    _ <- value(port, if (on) "1" else "0").transform(identity, printingIdentity)
+  } yield ()
+
+  def temperature: List[Double] = {
+    def allFilesIn(path: Path, glob: String) = {
+      val matcher = FileSystems.getDefault().getPathMatcher(s"glob:$glob")
+      var files: List[Path] = List.empty
+
+      Files.walkFileTree(path, new SimpleFileVisitor[Path] {
+        override def visitFile(file: Path, attrs: BasicFileAttributes) = {
+          if (matcher.matches(file.getFileName)) {
+            files = file.getFileName +: files
+          }
+          FileVisitResult.CONTINUE
+        }
+      })
+      files
+    }
+    allFilesIn(Paths.get("/sys/bus/w1/devices/"), "28-*/w1_slave").flatMap { sensorFile =>
+      slurp(sensorFile) match {
+        case r"(?ms).*t=(\d+)$degrees" => List(degrees.toDouble / 1000)
+        case _ => List.empty
+      }
+    }
+  }
 
   private implicit class RichProcessBuilder(pb: ProcessBuilder) {
     def runNoOutput() = {
@@ -52,7 +114,6 @@ object GpioControl {
 
       val result = Promise[Unit]
 
-      import scala.concurrent.ExecutionContext.Implicits.global
       stdOut.future.onComplete { stdOutResult =>
         stdErr.future.onComplete { stdErrResult =>
           (stdOutResult, stdErrResult) match {
@@ -69,6 +130,22 @@ object GpioControl {
 
       result.future
     }
+  }
+
+  private def slurp(filename: String): String = {
+    val source = scala.io.Source.fromFile(filename)
+    try source.mkString finally source.close()
+  }
+
+  private def slurp(path: Path): String = slurp(path.toString)
+
+  private def printingIdentity[T](t: T) = {
+    println(t)
+    t
+  }
+
+  implicit class Regex(sc: StringContext) {
+    def r = new scala.util.matching.Regex(sc.parts.mkString, sc.parts.tail.map(_ => "x"): _*)
   }
 
 }

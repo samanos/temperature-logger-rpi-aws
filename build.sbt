@@ -11,3 +11,5 @@ enablePlugins(GitVersioning)
 git.useGitDescribe := true
 
 enablePlugins(JavaAppPackaging)
+
+initialCommands in console := """import io.github.samanos.tlog._"""
