@@ -4,12 +4,15 @@ import akka.actor.ActorSystem
 import akka.http.scaladsl.Http
 import akka.http.scaladsl.marshallers.sprayjson.SprayJsonSupport._
 import akka.http.scaladsl.marshalling.Marshal
+import akka.http.scaladsl.unmarshalling.Unmarshal
 import akka.http.scaladsl.model._
 import akka.stream.ActorMaterializer
 import akka.stream.scaladsl._
 import akka.util.ByteString
 
 import spray.json._
+
+import scala.util._
 
 object Reporter {
 
@@ -43,8 +46,18 @@ object Reporter {
       }
       .mapAsync(parallelism = 1)(p => Marshal((HttpMethods.POST, reportTo, p)).to[HttpRequest])
       .map(_ -> 42)
+      .via(pool)
       .runForeach {
-        case (response, _) => response.entity.dataBytes.runWith(Sink.ignore)
+        case (Success(response), _) =>
+          Unmarshal(response).to[String].onComplete {
+            case Success(message) =>
+              if (!message.contains("Congratulations!")) {
+                sys.log.warning(s"Unexpected response message: $message")
+              }
+            case Failure(ex) => sys.log.warning(s"Failure when parsing response message: ${ex.getMessage}")
+          }
+        case (Failure(ex), _) =>
+          sys.log.warning(s"Failure when sending request: ${ex.getMessage}")
     }
   }
 }
