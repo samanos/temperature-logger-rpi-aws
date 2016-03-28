@@ -2,7 +2,7 @@ package io.github.samanos.tlog
 
 import com.typesafe.config.ConfigFactory
 
-object Main extends App {
+object Repl extends App {
 
   val conf = ConfigFactory.load()
   val gpio = new Gpio(conf)

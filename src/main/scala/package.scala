@@ -19,4 +19,8 @@ package object tlog {
     def r = new scala.util.matching.Regex(sc.parts.mkString, sc.parts.tail.map(_ => "x"): _*)
   }
 
+  implicit class RichJavaDuration(d: java.time.Duration) {
+    def toScala = scala.concurrent.duration.Duration.fromNanos(d.toNanos)
+  }
+
 }
