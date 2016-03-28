@@ -6,7 +6,7 @@ import akka.http.scaladsl.marshallers.sprayjson.SprayJsonSupport._
 import akka.http.scaladsl.marshalling.Marshal
 import akka.http.scaladsl.unmarshalling.Unmarshal
 import akka.http.scaladsl.model._
-import akka.stream.ActorMaterializer
+import akka.stream._
 import akka.stream.scaladsl._
 import akka.util.ByteString
 
@@ -25,7 +25,12 @@ object Reporter {
 
   def run = {
     implicit val sys = ActorSystem("Main")
-    implicit val mat = ActorMaterializer()
+    implicit val mat = ActorMaterializer {
+      ActorMaterializerSettings(sys).withSupervisionStrategy { ex =>
+        sys.log.warning(s"Error in the stream: ${ex.nameAndMessage}. Restarting stream.")
+        Supervision.restart
+      }
+    }
 
     import sys.dispatcher
 
@@ -54,10 +59,10 @@ object Reporter {
               if (!message.contains("Congratulations!")) {
                 sys.log.warning(s"Unexpected response message: $message")
               }
-            case Failure(ex) => sys.log.warning(s"Failure when parsing response message: ${ex.getMessage}")
+            case Failure(ex) => sys.log.warning(s"Failure when parsing response message: ${ex.nameAndMessage}")
           }
         case (Failure(ex), _) =>
-          sys.log.warning(s"Failure when sending request: ${ex.getMessage}")
+          sys.log.warning(s"Failure when sending request: ${ex.nameAndMessage}")
     }
   }
 }

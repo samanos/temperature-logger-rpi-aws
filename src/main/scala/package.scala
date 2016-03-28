@@ -1,5 +1,7 @@
 package io.github.samanos
 
+import akka.event.Logging
+
 import scala.io._
 import scala.util._
 
@@ -19,8 +21,12 @@ package object tlog {
     def r = new scala.util.matching.Regex(sc.parts.mkString, sc.parts.tail.map(_ => "x"): _*)
   }
 
-  implicit class RichJavaDuration(d: java.time.Duration) {
+  implicit class JavaDurationOps(d: java.time.Duration) {
     def toScala = scala.concurrent.duration.Duration.fromNanos(d.toNanos)
+  }
+
+  implicit class ThrowableOps(t: Throwable) {
+    def nameAndMessage = s"${Logging.simpleName(t)}: ${t.getMessage}"
   }
 
 }
