@@ -6,7 +6,7 @@ object Repl {
 
   def run = {
     val conf = ConfigFactory.load()
-    val gpio = new Gpio(conf)
+    val gpio = new Rpi1Gpio(conf)
 
     val leds = Map(
       "green" -> Gpio.Port.Gpio17,

@@ -19,10 +19,21 @@ object Gpio {
     val In = Value("in")
   }
 
-  def apply(conf: Config) = new Gpio(conf)
+  def apply(conf: Config) = new Rpi1Gpio(conf)
 }
 
-class Gpio(conf: Config) {
+trait Gpio {
+  import Gpio.Port.Port
+  import Gpio.Direction.Direction
+
+  def export(port: Port): Unit
+  def direction(port: Port, direction: Direction): Unit
+  def value(port: Port, value: String): Unit
+  def led(port: Port, on: Boolean): Unit
+  def temperature: Iterator[Double]
+}
+
+class Rpi1Gpio(conf: Config) extends Gpio {
   import Gpio.Direction._
   import Gpio.Port._
 
@@ -31,17 +42,17 @@ class Gpio(conf: Config) {
 
   import scala.concurrent.ExecutionContext.Implicits.global
 
-  def export(port: Port): Unit =
+  def export(port: Port) =
     if (GpioPath / s"gpio$port" notExists)
       port.toString >>: GpioPath / "export"
 
-  def direction(port: Port, direction: Direction): Unit = {
+  def direction(port: Port, direction: Direction)= {
     val directionFile = GpioPath / s"gpio$port" / "direction"
     if (directionFile.exists && directionFile.contentAsString != direction)
       direction.toString `>:` GpioPath / s"gpio$port" / "direction"
   }
 
-  def value(port: Port, value: String): Unit = {
+  def value(port: Port, value: String) = {
     val valueFile = GpioPath / s"gpio$port" / "value"
     if (valueFile.exists && valueFile.contentAsString != value)
       value `>:` GpioPath / s"gpio$port" / "value"
@@ -53,7 +64,7 @@ class Gpio(conf: Config) {
     value(port, if (on) "1" else "0")
   }
 
-  def temperature: Iterator[Double] = {
+  def temperature = {
     val matcher = OneWire.toFile.pathMatcher(File.PathMatcherSyntax.glob)("**/w1_slave")
     OneWire.toFile.walk(maxDepth=2)(File.VisitOptions.follow).filter(file => matcher.matches(file.path)).flatMap { sensor =>
       sensor.contentAsString match {
