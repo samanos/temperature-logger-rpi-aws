@@ -1,8 +1,7 @@
 package io.github.samanos.tlog
 
+import akka.Done
 import akka.actor.ActorSystem
-import akka.http.scaladsl.model._
-import akka.http.scaladsl.unmarshalling.Unmarshal
 import akka.stream._
 import akka.stream.scaladsl._
 import akka.stream.testkit.TestSubscriber
@@ -10,6 +9,7 @@ import akka.testkit.EventFilter
 
 import com.typesafe.config.ConfigFactory
 
+import org.eclipse.paho.client.mqttv3.MqttMessage
 import org.scalatest.concurrent.ScalaFutures
 import org.scalamock.scalatest.MockFactory
 import org.scalatest.{ Matchers, WordSpec }
@@ -17,6 +17,8 @@ import org.scalatest.{ Matchers, WordSpec }
 import scala.concurrent.{ Await, ExecutionContext }
 import scala.concurrent.duration._
 import scala.util._
+
+import java.nio.charset.StandardCharsets
 
 class ReporterSpec extends WordSpec with Matchers with MockFactory with ScalaFutures {
 
@@ -28,7 +30,7 @@ class ReporterSpec extends WordSpec with Matchers with MockFactory with ScalaFut
         (gpio.temperature _).expects().returning(Iterator.empty)
 
         EventFilter.warning(start = "Unable to read temperature", occurrences = 1) intercept {
-          Source.single(()).runWith(Reporter.reporterStream(gpio, Uri(), inmemHttp()))
+          Source.single(()).runWith(Reporter.reporterStream(gpio, blackholeUpload))
         }
       }
 
@@ -43,7 +45,7 @@ class ReporterSpec extends WordSpec with Matchers with MockFactory with ScalaFut
           (gpio.led _).expects(Reporter.Red, false)
         }
 
-        val done = Source.single(()).runWith(Reporter.reporterStream(gpio, Uri(), inmemHttp()))
+        val done = Source.single(()).runWith(Reporter.reporterStream(gpio, blackholeUpload))
         Await.ready(done, 1.second)
       }
     }
@@ -58,33 +60,30 @@ class ReporterSpec extends WordSpec with Matchers with MockFactory with ScalaFut
           (gpio.led _).expects(Reporter.Green, false)
         }
 
-        val done = Source.single(()).runWith(Reporter.reporterStream(gpio, Uri("/endpoint"), inmemHttp("Congratulations!")))
+        val done = Source.single(()).runWith(Reporter.reporterStream(gpio, inmemUpload))
         Await.ready(done, 1.second)
       }
 
     }
 
-    "prepare http request" in withFixture { gpio => implicit sys => implicit mat => implicit ec =>
+    "prepare upload request" in withFixture { gpio => implicit sys => implicit mat => implicit ec =>
       (gpio.temperature _).expects().returning(List(20.0, 21,0).toIterator)
       (gpio.led _).expects(*, *).anyNumberOfTimes
 
-      val reportTo = Uri("/report/url")
-      val testSub = TestSubscriber.probe[(HttpRequest, Int)]
-      Source.single(()).runWith(Reporter.reporterStream(gpio, reportTo, Flow.fromSinkAndSource(Sink.fromSubscriber(testSub), Source.empty)))
+      val testSub = TestSubscriber.probe[MqttMessage]
+      Source.single(()).runWith(Reporter.reporterStream(gpio, Flow.fromSinkAndSource(Sink.fromSubscriber(testSub), Source.empty)))
 
-      val (httpRequest, _) = testSub.requestNext()
-      httpRequest.method shouldBe HttpMethods.POST
-      httpRequest.uri shouldBe reportTo
-      Unmarshal(httpRequest).to[String].futureValue shouldBe """|{
-                                                                |  "value1": 20.0,
-                                                                |  "value2": 21.0
-                                                                |}""".stripMargin
+      val request = testSub.requestNext()
+      (new String(request.getPayload, StandardCharsets.UTF_8)) shouldBe """{"value1":20.0,"value2":21.0}"""
     }
   }
 
-  def inmemHttp(response: String = "") = Flow[(HttpRequest, Int)].map[(Try[HttpResponse], Int)] {
-    case (_, rId) => (Success(HttpResponse(StatusCodes.OK, entity = response)), rId)
+  def blackholeUpload(implicit ec: ExecutionContext) = Flow.fromSinkAndSourceMat(Sink.head[MqttMessage], Source.maybe[Done]) {
+    (future, promise) => future.onComplete { _ =>
+      promise.complete(Success(None))
+    }
   }
+  def inmemUpload = Flow[MqttMessage].map { _ => Done }
 
   def withFixture(test: Gpio => ActorSystem => Materializer => ExecutionContext => Any) {
     val conf = ConfigFactory.parseString("""

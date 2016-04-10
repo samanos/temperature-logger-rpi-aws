@@ -2,20 +2,18 @@ package io.github.samanos.tlog
 
 import akka.Done
 import akka.actor.ActorSystem
-import akka.http.scaladsl.Http
-import akka.http.scaladsl.marshallers.sprayjson.SprayJsonSupport._
-import akka.http.scaladsl.marshalling.Marshal
-import akka.http.scaladsl.unmarshalling.Unmarshal
-import akka.http.scaladsl.model._
 import akka.stream._
 import akka.stream.scaladsl._
 import akka.util.ByteString
 
+import org.eclipse.paho.client.mqttv3.MqttMessage
 import spray.json._
 
 import scala.concurrent._
 import scala.concurrent.duration._
 import scala.util._
+
+import java.nio.charset.StandardCharsets
 
 object Reporter {
 
@@ -41,18 +39,16 @@ object Reporter {
     import sys.dispatcher
 
     val interval = sys.settings.config.getDuration("tlog.report-interval").toScala
-    val makerkey = sys.settings.config.getString("tlog.maker-key")
-    val reportTo = Uri(sys.settings.config.getString("tlog.report-url") + makerkey)
 
-    val gpio = Gpio(sys.settings.config)
-    val pool = Http().cachedHostConnectionPool[Int](reportTo.authority.host.toString)
+    val gpio = Gpio()
+    val upload = Mqtt.connection(sys.settings.config.getConfig("tlog.mqtt"))
 
     sys.log.info("Starting reporter stream.")
 
-    Source.tick(interval, interval, ()).runWith(reporterStream(gpio, reportTo, pool))
+    Source.tick(interval, interval, ()).runWith(reporterStream(gpio, upload))
   }
 
-  def reporterStream(gpio: Gpio, reportTo: Uri, pool: Flow[(HttpRequest, Int), (Try[HttpResponse], Int), _])(implicit ec: ExecutionContext, sys: ActorSystem, mat: Materializer) =
+  def reporterStream(gpio: Gpio, upload: Flow[MqttMessage, Done, _])(implicit ec: ExecutionContext, sys: ActorSystem, mat: Materializer) =
     Flow[Unit]
       .map(_ => gpio.temperature.toList)
       .mapConcat {
@@ -62,23 +58,9 @@ object Reporter {
         case Nil => sys.log.warning("Unable to read temperature. Check if the module is connected properly."); Nil
       }
       .mapAsync(parallelism = 1)(blink(gpio, Red))
-      .mapAsync(parallelism = 1)(p => Marshal((HttpMethods.POST, reportTo, p)).to[HttpRequest])
-      .map(_ -> 42)
-      .via(pool)
-      .mapAsync(parallelism = 1) {
-        case (Success(response), _) =>
-          Unmarshal(response).to[String].map {
-            case msg => Success(msg)
-          } recover {
-            case t => Failure(t)
-          }
-        case (Failure(t), _) => Future.successful(Failure(t))
-      }
-      .mapConcat {
-        case Success(message) if message.contains("Congratulations!") => Done :: Nil
-        case Success(message) => sys.log.warning(s"Unexpected response message: $message"); Nil
-        case Failure(ex) => sys.log.warning(s"Failure when parsing response message: ${ex.nameAndMessage}"); Nil
-      }
+      .map(_.toJson.toString)
+      .map(json => new MqttMessage(json.getBytes(StandardCharsets.UTF_8)))
+      .via(upload)
       .mapAsync(parallelism = 1)(blink(gpio, Green))
       .toMat(Sink.ignore)(Keep.right)
 

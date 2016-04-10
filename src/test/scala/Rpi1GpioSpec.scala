@@ -4,15 +4,15 @@ import better.files._, Cmds._
 import com.typesafe.config.ConfigFactory
 import org.scalatest._
 
-class GpioSpec extends WordSpec with Matchers {
+class Rpi1GpioSpec extends WordSpec with Matchers {
 
   "gpio" should {
 
     "export" when {
 
       "gpio port is not exported" in withTempDirectory { tempDir =>
-        val conf = config(s"tlog.gpio=$tempDir")
-        val gpio = Gpio(conf)
+        val conf = config(s"gpio=$tempDir")
+        val gpio = new Rpi1Gpio(conf)
 
         gpio.export(Gpio.Port.Gpio17)
 
@@ -23,8 +23,8 @@ class GpioSpec extends WordSpec with Matchers {
     "not export" when {
 
       "gpio port is exported" in withTempDirectory { tempDir =>
-        val conf = config(s"tlog.gpio=$tempDir")
-        val gpio = Gpio(conf)
+        val conf = config(s"gpio=$tempDir")
+        val gpio = new Rpi1Gpio(conf)
 
         (tempDir / "gpio17").createIfNotExists()
         gpio.export(Gpio.Port.Gpio17)
@@ -35,8 +35,8 @@ class GpioSpec extends WordSpec with Matchers {
     }
 
     "change direction" in withTempDirectory { tempDir =>
-      val conf = config(s"tlog.gpio=$tempDir")
-      val gpio = Gpio(conf)
+      val conf = config(s"gpio=$tempDir")
+      val gpio = new Rpi1Gpio(conf)
 
       (tempDir / "gpio17" / "direction").createIfNotExists() << "out"
       gpio.direction(Gpio.Port.Gpio17, Gpio.Direction.In)
@@ -45,8 +45,8 @@ class GpioSpec extends WordSpec with Matchers {
     }
 
     "change value" in withTempDirectory { tempDir =>
-      val conf = config(s"tlog.gpio=$tempDir")
-      val gpio = Gpio(conf)
+      val conf = config(s"gpio=$tempDir")
+      val gpio = new Rpi1Gpio(conf)
 
       (tempDir / "gpio17" / "value").createIfNotExists() << "1"
       gpio.value(Gpio.Port.Gpio17, "0")
@@ -61,8 +61,8 @@ class GpioSpec extends WordSpec with Matchers {
       ln_s(tempDir / "sensors" / "28-000005d99910", tempDir / "28-000005d99910")
       ln_s(tempDir / "sensors" / "28-0000067aba63", tempDir / "28-0000067aba63")
 
-      val conf = config(s"tlog.w1=${tempDir}/sensors")
-      val gpio = Gpio(conf)
+      val conf = config(s"w1=${tempDir}/sensors")
+      val gpio = new Rpi1Gpio(conf)
 
       gpio.temperature.toSet shouldBe Set(23.000, 22.000)
     }
@@ -79,5 +79,8 @@ class GpioSpec extends WordSpec with Matchers {
   }
 
   def config(conf: String) =
-    ConfigFactory.parseString(conf).withFallback(ConfigFactory.load())
+    ConfigFactory.parseString(conf).withFallback(ConfigFactory.parseString("""
+      gpio=gpio
+      w1=w1
+    """))
 }

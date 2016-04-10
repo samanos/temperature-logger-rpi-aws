@@ -4,17 +4,20 @@ name := "tlog"
 scalaVersion := "2.11.8"
 scalacOptions += "-feature"
 
-libraryDependencies ++= Seq(
-  "com.typesafe.akka"    %% "akka-http-spray-json-experimental" % "2.4.2",
-  "com.github.pathikrit" %% "better-files"                      % "2.15.0",
-  "com.typesafe.akka"    %% "akka-testkit"                      % "2.4.2"    % Test,
-  "com.typesafe.akka"    %% "akka-stream-testkit"               % "2.4.2"    % Test,
-  "org.scalatest"        %% "scalatest"                         % "2.2.6"    % Test,
-  "org.scalamock"        %% "scalamock-scalatest-support"       % "3.2.2"    % Test,
-  "com.amazonaws"         % "DynamoDBLocal"                     % "1.10.5.1" % Test
-)
+val Akka = "2.4.3"
 
-resolvers += "DynamoDB Local" at "http://dynamodb-local.s3-website-us-west-2.amazonaws.com/release"
+libraryDependencies ++= Seq(
+  "com.typesafe.akka"    %% "akka-stream"                     % Akka,
+  "io.spray"             %% "spray-json"                      % "1.3.2",
+  "com.github.pathikrit" %% "better-files"                    % "2.15.0",
+  "org.eclipse.paho"      % "org.eclipse.paho.client.mqttv3"  % "1.0.2",
+  "org.bouncycastle"      % "bcprov-jdk15on"                  % "1.54",
+  "org.bouncycastle"      % "bcpkix-jdk15on"                  % "1.54",
+  "com.typesafe.akka"    %% "akka-testkit"                    % Akka      % Test,
+  "com.typesafe.akka"    %% "akka-stream-testkit"             % Akka      % Test,
+  "org.scalatest"        %% "scalatest"                       % "2.2.6"   % Test,
+  "org.scalamock"        %% "scalamock-scalatest-support"     % "3.2.2"   % Test
+)
 
 enablePlugins(GitVersioning)
 git.useGitDescribe := true

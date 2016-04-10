@@ -1,5 +1,6 @@
 package io.github.samanos.tlog
 
+import akka.actor._
 import better.files._
 import com.typesafe.config.Config
 
@@ -19,7 +20,10 @@ object Gpio {
     val In = Value("in")
   }
 
-  def apply(conf: Config) = new Rpi1Gpio(conf)
+  def apply()(implicit sys: ActorSystem) =
+    sys.asInstanceOf[ExtendedActorSystem].dynamicAccess.createInstanceFor[Gpio](
+      sys.settings.config.getString("tlog.gpio.class"),
+      Vector(classOf[Config] -> sys.settings.config.getConfig("tlog.gpio"))).get
 }
 
 trait Gpio {
@@ -37,8 +41,8 @@ class Rpi1Gpio(conf: Config) extends Gpio {
   import Gpio.Direction._
   import Gpio.Port._
 
-  private final val GpioPath = conf.getString("tlog.gpio")
-  private final val OneWire = conf.getString("tlog.w1")
+  private final val GpioPath = conf.getString("gpio")
+  private final val OneWire = conf.getString("w1")
 
   import scala.concurrent.ExecutionContext.Implicits.global
 
@@ -46,7 +50,7 @@ class Rpi1Gpio(conf: Config) extends Gpio {
     if (GpioPath / s"gpio$port" notExists)
       port.toString >>: GpioPath / "export"
 
-  def direction(port: Port, direction: Direction)= {
+  def direction(port: Port, direction: Direction) = {
     val directionFile = GpioPath / s"gpio$port" / "direction"
     if (directionFile.exists && directionFile.contentAsString != direction)
       direction.toString `>:` GpioPath / s"gpio$port" / "direction"
@@ -73,4 +77,15 @@ class Rpi1Gpio(conf: Config) extends Gpio {
       }
     }
   }
+}
+
+class ConsoleGpio(conf: Config) extends Gpio {
+  import Gpio.Direction._
+  import Gpio.Port._
+
+  def export(port: Port) = println(s"Exported $port")
+  def direction(port: Port, direction: Direction) = println(s"Changing $port direction to $direction")
+  def value(port: Port, value: String) = println(s"Changing $port value to $value")
+  def led(port: Port, on: Boolean) = println(s"Turning led $port to $on")
+  def temperature = Vector.fill(2)(20 + scala.math.random).toIterator
 }

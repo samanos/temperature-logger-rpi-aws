@@ -1,12 +1,12 @@
 package io.github.samanos.tlog
 
-import com.typesafe.config.ConfigFactory
+import akka.actor.ActorSystem
 
 object Repl {
 
   def run = {
-    val conf = ConfigFactory.load()
-    val gpio = new Rpi1Gpio(conf)
+    implicit val sys = ActorSystem("repl")
+    val gpio = Gpio()
 
     val leds = Map(
       "green" -> Gpio.Port.Gpio17,
