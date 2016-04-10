@@ -28,13 +28,13 @@ class ReporterSpec extends WordSpec with Matchers with MockFactory with ScalaFut
         (gpio.temperature _).expects().returning(Iterator.empty)
 
         EventFilter.warning(start = "Unable to read temperature", occurrences = 1) intercept {
-          Source.single(()).runWith(Reporter.reporterStream(gpio, Uri(), blackHoleHttp))
+          Source.single(()).runWith(Reporter.reporterStream(gpio, Uri(), inmemHttp()))
         }
       }
 
     }
 
-    "blink red" when {
+    "blink red led" when {
 
       "tempreture was read" in withFixture { gpio => implicit sys => implicit mat => implicit ec =>
         (gpio.temperature _).expects().returning(List(20.0, 21,0).toIterator)
@@ -43,9 +43,12 @@ class ReporterSpec extends WordSpec with Matchers with MockFactory with ScalaFut
           (gpio.led _).expects(Reporter.Red, false)
         }
 
-        val done = Source.single(()).runWith(Reporter.reporterStream(gpio, Uri(), blackHoleHttp))
+        val done = Source.single(()).runWith(Reporter.reporterStream(gpio, Uri(), inmemHttp()))
         Await.ready(done, 1.second)
       }
+    }
+
+    "blink green led" when {
 
       "measurement was sent" in withFixture { gpio => implicit sys => implicit mat => implicit ec =>
         (gpio.temperature _).expects().returning(List(20.0, 21,0).toIterator)
@@ -55,7 +58,7 @@ class ReporterSpec extends WordSpec with Matchers with MockFactory with ScalaFut
           (gpio.led _).expects(Reporter.Green, false)
         }
 
-        val done = Source.single(()).runWith(Reporter.reporterStream(gpio, Uri(), Flow.fromSinkAndSource(Sink.ignore, Source.single((Success(HttpResponse(StatusCodes.Accepted, entity = HttpEntity("Congratulations!"))), 42)))))
+        val done = Source.single(()).runWith(Reporter.reporterStream(gpio, Uri("/endpoint"), inmemHttp("Congratulations!")))
         Await.ready(done, 1.second)
       }
 
@@ -79,7 +82,9 @@ class ReporterSpec extends WordSpec with Matchers with MockFactory with ScalaFut
     }
   }
 
-  def blackHoleHttp = Flow.fromSinkAndSource(Sink.ignore, Source.empty)
+  def inmemHttp(response: String = "") = Flow[(HttpRequest, Int)].map[(Try[HttpResponse], Int)] {
+    case (_, rId) => (Success(HttpResponse(StatusCodes.OK, entity = response)), rId)
+  }
 
   def withFixture(test: Gpio => ActorSystem => Materializer => ExecutionContext => Any) {
     val conf = ConfigFactory.parseString("""
@@ -89,7 +94,12 @@ class ReporterSpec extends WordSpec with Matchers with MockFactory with ScalaFut
       }
     """).withFallback(ConfigFactory.load)
     implicit val sys = ActorSystem("ReporterSpec", conf)
-    implicit val mat = ActorMaterializer()
+    implicit val mat = ActorMaterializer {
+      ActorMaterializerSettings(sys).withSupervisionStrategy { ex =>
+        sys.log.warning(s"Error in the stream: ${ex.nameAndMessage}. Restarting stream.")
+        Supervision.stop
+      }
+    }
     val gpio = mock[Gpio]
     try {
       test(gpio)(sys)(mat)(sys.dispatcher)

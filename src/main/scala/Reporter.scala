@@ -1,5 +1,6 @@
 package io.github.samanos.tlog
 
+import akka.Done
 import akka.actor.ActorSystem
 import akka.http.scaladsl.Http
 import akka.http.scaladsl.marshallers.sprayjson.SprayJsonSupport._
@@ -12,8 +13,8 @@ import akka.util.ByteString
 
 import spray.json._
 
+import scala.concurrent._
 import scala.concurrent.duration._
-import scala.concurrent.ExecutionContext
 import scala.util._
 
 object Reporter {
@@ -60,31 +61,38 @@ object Reporter {
         case value1 :: value2 :: rest => List(Payload(value1, value2))
         case Nil => sys.log.warning("Unable to read temperature. Check if the module is connected properly."); Nil
       }
-      .map { p => blink(gpio, Red); p }
+      .mapAsync(parallelism = 1)(blink(gpio, Red))
       .mapAsync(parallelism = 1)(p => Marshal((HttpMethods.POST, reportTo, p)).to[HttpRequest])
       .map(_ -> 42)
       .via(pool)
-      .toMat(Sink.foreach {
+      .mapAsync(parallelism = 1) {
         case (Success(response), _) =>
-          Unmarshal(response).to[String].onComplete {
-            case Success(message) =>
-              if (message.contains("Congratulations!")) {
-                blink(gpio, Green)
-              } else {
-                sys.log.warning(s"Unexpected response message: $message")
-              }
-            case Failure(ex) => sys.log.warning(s"Failure when parsing response message: ${ex.nameAndMessage}")
+          Unmarshal(response).to[String].map {
+            case msg => Success(msg)
+          } recover {
+            case t => Failure(t)
           }
-        case (Failure(ex), _) =>
-          sys.log.warning(s"Failure when sending request: ${ex.nameAndMessage}")
-      })(Keep.right)
+        case (Failure(t), _) => Future.successful(Failure(t))
+      }
+      .mapConcat {
+        case Success(message) if message.contains("Congratulations!") => Done :: Nil
+        case Success(message) => sys.log.warning(s"Unexpected response message: $message"); Nil
+        case Failure(ex) => sys.log.warning(s"Failure when parsing response message: ${ex.nameAndMessage}"); Nil
+      }
+      .mapAsync(parallelism = 1)(blink(gpio, Green))
+      .toMat(Sink.ignore)(Keep.right)
 
-  def blink(gpio: Gpio, led: Gpio.Port.Port)(implicit sys: ActorSystem) = {
+  def blink[T](gpio: Gpio, led: Gpio.Port.Port)(payload: T)(implicit sys: ActorSystem) = {
     import sys.dispatcher
+
     val duration = sys.settings.config.getDuration("tlog.led-blink-duration").toScala
     gpio.led(led, true)
+
+    val completion = Promise[T]
     sys.scheduler.scheduleOnce(duration) {
       gpio.led(led, false)
+      completion.success(payload)
     }
+    completion.future
   }
 }
