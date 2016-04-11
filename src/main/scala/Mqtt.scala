@@ -33,7 +33,13 @@ object Mqtt {
     Flow[MqttMessage]
       .map { msg =>
         msg.setQos(0)
-        client.publish(conf.getString("topic"), msg)
+        try {
+          client.publish(conf.getString("topic"), msg)
+        } catch {
+          case ex: MqttException =>
+            client.connect(opts)
+            throw ex
+        }
         Done
       }
       .viaMat(Flow[Done])((_, _) => client)
