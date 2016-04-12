@@ -19,6 +19,7 @@ import scala.concurrent.duration._
 import scala.util._
 
 import java.nio.charset.StandardCharsets
+import java.time._
 
 class ReporterSpec extends WordSpec with Matchers with MockFactory with ScalaFutures {
 
@@ -26,11 +27,11 @@ class ReporterSpec extends WordSpec with Matchers with MockFactory with ScalaFut
 
     "log" when {
 
-      "not able to read temperature" in withFixture { gpio => implicit sys => implicit mat => implicit ec =>
+      "not able to read temperature" in withFixture { gpio => clock => implicit sys => implicit mat => implicit ec =>
         (gpio.temperature _).expects().returning(Iterator.empty)
 
         EventFilter.warning(start = "Unable to read temperature", occurrences = 1) intercept {
-          Source.single(()).runWith(Reporter.reporterStream(gpio, blackholeUpload))
+          Source.single(()).runWith(Reporter.reporterStream(gpio, blackholeUpload, clock))
         }
       }
 
@@ -38,21 +39,21 @@ class ReporterSpec extends WordSpec with Matchers with MockFactory with ScalaFut
 
     "blink red led" when {
 
-      "tempreture was read" in withFixture { gpio => implicit sys => implicit mat => implicit ec =>
+      "tempreture was read" in withFixture { gpio => clock => implicit sys => implicit mat => implicit ec =>
         (gpio.temperature _).expects().returning(List(20.0, 21,0).toIterator)
         inSequence {
           (gpio.led _).expects(Reporter.Red, true)
           (gpio.led _).expects(Reporter.Red, false)
         }
 
-        val done = Source.single(()).runWith(Reporter.reporterStream(gpio, blackholeUpload))
+        val done = Source.single(()).runWith(Reporter.reporterStream(gpio, blackholeUpload, clock))
         Await.ready(done, 1.second)
       }
     }
 
     "blink green led" when {
 
-      "measurement was sent" in withFixture { gpio => implicit sys => implicit mat => implicit ec =>
+      "measurement was sent" in withFixture { gpio => clock => implicit sys => implicit mat => implicit ec =>
         (gpio.temperature _).expects().returning(List(20.0, 21,0).toIterator)
         (gpio.led _).expects(Reporter.Red, *).anyNumberOfTimes
         inSequence {
@@ -60,21 +61,23 @@ class ReporterSpec extends WordSpec with Matchers with MockFactory with ScalaFut
           (gpio.led _).expects(Reporter.Green, false)
         }
 
-        val done = Source.single(()).runWith(Reporter.reporterStream(gpio, inmemUpload))
+        val done = Source.single(()).runWith(Reporter.reporterStream(gpio, inmemUpload, clock))
         Await.ready(done, 1.second)
       }
 
     }
 
-    "prepare upload request" in withFixture { gpio => implicit sys => implicit mat => implicit ec =>
+    "prepare upload request" in withFixture { gpio => clock => implicit sys => implicit mat => implicit ec =>
       (gpio.temperature _).expects().returning(List(20.0, 21,0).toIterator)
       (gpio.led _).expects(*, *).anyNumberOfTimes
 
+      val epochMillis = Instant.now(clock).toEpochMilli
+
       val testSub = TestSubscriber.probe[MqttMessage]
-      Source.single(()).runWith(Reporter.reporterStream(gpio, Flow.fromSinkAndSource(Sink.fromSubscriber(testSub), Source.empty)))
+      Source.single(()).runWith(Reporter.reporterStream(gpio, Flow.fromSinkAndSource(Sink.fromSubscriber(testSub), Source.empty), clock))
 
       val request = testSub.requestNext()
-      (new String(request.getPayload, StandardCharsets.UTF_8)) shouldBe """{"value1":20.0,"value2":21.0}"""
+      (new String(request.getPayload, StandardCharsets.UTF_8)) shouldBe s"""{"value1":20.0,"value2":21.0,"epochMillis":$epochMillis}"""
     }
   }
 
@@ -85,7 +88,7 @@ class ReporterSpec extends WordSpec with Matchers with MockFactory with ScalaFut
   }
   def inmemUpload = Flow[MqttMessage].map { _ => Done }
 
-  def withFixture(test: Gpio => ActorSystem => Materializer => ExecutionContext => Any) {
+  def withFixture(test: Gpio => Clock => ActorSystem => Materializer => ExecutionContext => Any) {
     val conf = ConfigFactory.parseString("""
       akka.loggers = [akka.testkit.TestEventListener]
       tlog {
@@ -100,8 +103,9 @@ class ReporterSpec extends WordSpec with Matchers with MockFactory with ScalaFut
       }
     }
     val gpio = mock[Gpio]
+    val clock = Clock.fixed(Instant.now, ZoneId.systemDefault)
     try {
-      test(gpio)(sys)(mat)(sys.dispatcher)
+      test(gpio)(clock)(sys)(mat)(sys.dispatcher)
     } finally {
       sys.terminate()
     }

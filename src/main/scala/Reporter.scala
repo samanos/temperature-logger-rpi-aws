@@ -14,13 +14,14 @@ import scala.concurrent.duration._
 import scala.util._
 
 import java.nio.charset.StandardCharsets
+import java.time._
 
 object Reporter {
 
-  case class Payload(value1: Double, value2: Double)
+  case class Payload(value1: Double, value2: Double, epochMillis: Long)
 
   object JsonSupport extends DefaultJsonProtocol {
-    implicit val payload = jsonFormat2(Payload)
+    implicit val payload = jsonFormat3(Payload)
   }
   import JsonSupport._
 
@@ -42,19 +43,20 @@ object Reporter {
 
     val gpio = Gpio()
     val upload = Mqtt.connection(sys.settings.config.getConfig("tlog.mqtt"))
+    val clock = Clock.systemUTC
 
     sys.log.info("Starting reporter stream.")
 
-    Source.tick(interval, interval, ()).runWith(reporterStream(gpio, upload))
+    Source.tick(interval, interval, ()).runWith(reporterStream(gpio, upload, clock))
   }
 
-  def reporterStream(gpio: Gpio, upload: Flow[MqttMessage, Done, _])(implicit ec: ExecutionContext, sys: ActorSystem, mat: Materializer) =
+  def reporterStream(gpio: Gpio, upload: Flow[MqttMessage, Done, _], clock: Clock)(implicit ec: ExecutionContext, sys: ActorSystem, mat: Materializer) =
     Flow[Unit]
       .map(_ => gpio.temperature.toList)
       .mapConcat {
-        case value :: Nil => List(Payload(value, 0))
-        case value1 :: value2 :: Nil => List(Payload(value1, value2))
-        case value1 :: value2 :: rest => List(Payload(value1, value2))
+        case value :: Nil => List(Payload(value, 0, Instant.now(clock).toEpochMilli))
+        case value1 :: value2 :: Nil => List(Payload(value1, value2, Instant.now(clock).toEpochMilli))
+        case value1 :: value2 :: rest => List(Payload(value1, value2, Instant.now(clock).toEpochMilli))
         case Nil => sys.log.warning("Unable to read temperature. Check if the module is connected properly."); Nil
       }
       .mapAsync(parallelism = 1)(blink(gpio, Red))
